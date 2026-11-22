@@ -1,5 +1,5 @@
 // ============================================================
-// FILE: worker.js (FINAL FIX - Bacon Bypass Extractor)
+// FILE: worker.js (PURE EXTRACTOR - NO BLACKLIST)
 // ============================================================
 const { Client } = require('discord.js-selfbot-v13');
 const { Redis } = require('@upstash/redis');
@@ -30,48 +30,37 @@ client.on('ready', () => {
 client.on('messageCreate', async (msg) => {
   if (msg.author.id === client.user.id) return;
   
-  // Filter: Cuma respon pesan dari Bot ID di Channel ID target
   if (msg.channel.id === CHANNEL_ID && msg.author.id === BOT_ID) {
-    let resultLink = "";
+    
+    // Abaikan pesan list support
+    if (msg.content && msg.content.includes("Supported Links")) return;
 
-    // BACA DARI EMBED
+    let fullText = msg.content || "";
+    
     if (msg.embeds.length > 0) {
       const embed = msg.embeds[0];
-      
-      // Cari field yang namanya "Mobile Copy" atau "PC Copy"
+      if (embed.description) fullText += "\n" + embed.description;
       if (embed.fields && embed.fields.length > 0) {
         for (const field of embed.fields) {
-          if (field.name.toLowerCase().includes("mobile copy") || field.name.toLowerCase().includes("pc copy")) {
-            resultLink = field.value; // Ambil isi fieldnya (link mediafire)
-            break; // Langsung stop kalo udah nemu
-          }
+          fullText += "\n" + field.value;
         }
       }
-      
-      // Fallback: Kalo ternyata bot ngirim link di description
-      if (!resultLink && embed.description) {
-        const urlRegex = /(https?:\/\/[^\s]+)/g;
-        const match = embed.description.match(urlRegex);
-        if (match) resultLink = match[0];
-      }
-    } 
-    
-    // Fallback: Kalo bot ngirim teks biasa
-    if (!resultLink && msg.content) {
-      const urlRegex = /(https?:\/\/[^\s]+)/g;
-      const match = msg.content.match(urlRegex);
-      if (match) resultLink = match[0];
     }
 
-    // Bersihin format markdown (` atau * atau <>)
-    if (resultLink) {
-      resultLink = resultLink.replace(/[`*_<>]/g, '').trim();
-      
-      // Validasi: Jangan simpen link linkvertise atau link asli masuk
-      if (resultLink !== currentTarget && !resultLink.includes("linkvertise.com")) {
-        await redis.set('last_result', resultLink);
-        console.log(`[+] HASIL BYPASS DAPET: ${resultLink}`);
+    // Regex nyedot semua link, berhenti di spasi/backtick/bintang
+    const urlRegex = /(https?:\/\/[^\s`*<>]+)/g;
+    const foundLinks = fullText.match(urlRegex) || [];
+
+    for (let link of foundLinks) {
+      // Bersihin ujung link dari karakter markdown
+      link = link.replace(/[`*_<>\]\[\(\)]+$/g, '').trim(); 
+
+      // Kalo link ini BUKAN link yang lo tembak, SEDOT!
+      if (link !== currentTarget) {
+        await redis.set('last_result', link);
+        console.log(`[+] HASIL BYPASS DAPET: ${link}`);
         isProcessing = false;
+        return; // Langsung stop biar gak overwrite
       }
     }
   }
@@ -93,11 +82,8 @@ function startQueueListener() {
         
         try {
           const channel = await client.channels.fetch(CHANNEL_ID);
-          if (!channel) throw new Error("Channel ID gak ketemu.");
-          
           await channel.send(`/bypass url:${job}`);
           
-          // Timeout dinaikin jadi 30 detik buat nunggu bot proses
           setTimeout(() => {
             if (isProcessing) {
               console.log(`[x] TIMEOUT: Bot gak ngasih link bypass dalam 30 detik.`);
