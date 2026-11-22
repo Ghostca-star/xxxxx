@@ -1,24 +1,21 @@
 // ============================================================
 // FILE: worker.js
-// Jalan di GitHub Actions.
-// Pastiin lo udah isi Secrets di GitHub (TOKEN_USER, CHANNEL_ID, BOT_ID)
 // ============================================================
 const { Client } = require('discord.js-selfbot-v13');
 const { Redis } = require('@upstash/redis');
 
-// Koneksi ke database antrean Upstash (Udah sesuai punya lo)
+// INI JUGA LO GANTI KE TOKEN REST YANG BENER
 const redis = new Redis({
   url: 'https://integral-cardinal-210670.upstash.io',
-  token: 'gQAAAAAAAzbuAAIgcDHO6BGx65qFwgIyjzlZolB4gAVPvXmiyZIGB1k4L4jV0w',
+  token: 'gQAAAAAAAzbuAAIgcDFhZjc5ZjM1MDQ1YTI0MWM3YjQ3OWE0MjE3ODUzYzA5Zg', 
 });
 
-// Ambil config dari Environment Variable GitHub
 const TOKEN_USER = process.env.TOKEN_USER; 
 const CHANNEL_ID = process.env.CHANNEL_ID; 
 const BOT_ID = process.env.BOT_ID;     
 
 if (!TOKEN_USER || !CHANNEL_ID || !BOT_ID) {
-  console.error("[x] ERROR: Secrets GitHub belum lengkap! Cek TOKEN_USER, CHANNEL_ID, BOT_ID.");
+  console.error("[x] ERROR: Secrets GitHub belum lengkap!");
   process.exit(1);
 }
 
@@ -30,53 +27,33 @@ client.on('ready', () => {
   startQueueListener();
 });
 
-// ============================================================
-// 1. NANGKEP BALASAN DARI BOT BACON
-// ============================================================
 client.on('messageCreate', async (msg) => {
-  // Abaikan pesan dari akun lo sendiri
   if (msg.author.id === client.user.id) return;
   
-  // Cek apakah pesan dari bot target di channel target
   if (msg.channel.id === CHANNEL_ID && msg.author.id === BOT_ID) {
     let resultLink = "";
     
-    // Prioritas 1: Ambil dari embed (kalo botnya bales pake embed)
     if (msg.embeds.length > 0) {
       const embed = msg.embeds[0];
       resultLink = embed.description || embed.url || embed.title || "";
-      
-      if (embed.fields && embed.fields.length > 0) {
-        resultLink = embed.fields[0].value; 
-      }
-    } 
-    // Prioritas 2: Ambil dari text biasa (kalo botnya bales teks)
-    else {
+      if (embed.fields && embed.fields.length > 0) resultLink = embed.fields[0].value; 
+    } else {
       resultLink = msg.content;
     }
 
-    // Bersihin format markdown
     if (resultLink) {
       resultLink = resultLink.replace(/[`*_]/g, '').trim();
-      
-      // Simpan ke Redis
       await redis.set('last_result', resultLink);
-      console.log(`[+] HASIL DITEMUKAN & DISIMPAN KE REDIS: ${resultLink}`);
-      
-      // Set status selesai
+      console.log(`[+] HASIL DITEMUKAN: ${resultLink}`);
       isProcessing = false;
     }
   }
 });
 
-// ============================================================
-// 2. DENGERIN ANTREAN DARI VERCEL (REDIS)
-// ============================================================
 function startQueueListener() {
   console.log("[*] Mulai ngedengerin antrean dari Vercel...");
   
   setInterval(async () => {
-    // Kalo masih nunggu bot bales, jangan kirim command baru dulu
     if (isProcessing) return; 
 
     try {
@@ -84,49 +61,36 @@ function startQueueListener() {
       
       if (job) {
         isProcessing = true;
-        console.log(`[>] Request masuk. Ngirim command ke DC: /bypass url:${job}`);
+        console.log(`[>] Request masuk: /bypass url:${job}`);
         
         try {
           const channel = await client.channels.fetch(CHANNEL_ID);
-          if (!channel) throw new Error("Channel ID gak ketemu / bot gak punya akses.");
-          
-          // Kirim perintah
+          if (!channel) throw new Error("Channel ID gak ketemu.");
           await channel.send(`/bypass url:${job}`);
           
-          // Kasih waktu bot maksimal 20 detik buat mikir & bales
           setTimeout(() => {
             if (isProcessing) {
-              console.log(`[x] TIMEOUT: Bot Bacon gak bales dalam 20 detik untuk URL: ${job}`);
+              console.log(`[x] TIMEOUT: Bot gak bales untuk URL: ${job}`);
               isProcessing = false;
               redis.del('last_result'); 
             }
           }, 20000);
           
         } catch (err) {
-          console.log(`[x] Gagal ngetik di channel: ${err.message}`);
+          console.log(`[x] Gagal ngetik: ${err.message}`);
           isProcessing = false;
         }
       }
     } catch (redisError) {
-      console.log(`[x] Error koneksi Redis: ${redisError.message}`);
+      console.log(`[x] Error Redis: ${redisError.message}`);
     }
-  }, 3000); // Cek antrean tiap 3 detik
+  }, 3000);
 }
 
-// ============================================================
-// 3. HANDLE ERROR & MATI
-// ============================================================
-client.on('error', (err) => {
-  console.log(`[x] Discord Error: ${err.message}`);
-});
+client.on('error', (err) => console.log(`[x] Discord Error: ${err.message}`));
+process.on('unhandledRejection', (reason) => console.log(`[x] Error: ${reason}`));
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.log(`[x] Unhandled Rejection: ${reason}`);
-});
-
-// Login pake token akun lo
 client.login(TOKEN_USER).catch(err => {
   console.log(`[x] GAGAL LOGIN: ${err.message}`);
-  console.log("[!] Cek token akun lo di GitHub Secrets, mungkin udah expired atau kena reset.");
   process.exit(1);
 });
